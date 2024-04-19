@@ -1,0 +1,369 @@
+---
+title: "DASC 5420 Final Project"
+author: "Yuxin Liu & Qiuhan Li"
+date: "2024-04-11"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+# modify this to read the file
+forestfires <- read.csv("~/Desktop/DASC 5420/Final Term Project-20240314/forest+fires/forestfires.csv", header = TRUE)
+head(forestfires)
+```
+
+```{r}
+# Check area value frequency
+table(forestfires$area)
+```
+
+```{r}
+# Check the data structure
+str(forestfires)
+```
+
+```{r}
+# Load necessary packages
+library(caret)
+library(dplyr)
+library(e1071)
+library(MASS)
+
+data <- forestfires %>%
+  mutate(month = factor(month),
+         day = factor(day)) %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# transfer "month" and "day" variables into numeric variables
+month_mapping <- c(
+  "jan" = 1, "feb" = 2, "mar" = 3, "apr" = 4,
+  "may" = 5, "jun" = 6, "jul" = 7, "aug" = 8,
+  "sep" = 9, "oct" = 10, "nov" = 11, "dec" = 12
+)
+
+data$month <- month_mapping[data$month]
+
+day_mapping <- c("mon" = 1, "tue" = 2, "wed" = 3, "thu" = 4, "fri" = 5, "sat" = 6, "sun" = 7)
+
+data$day <- day_mapping[data$day]
+```
+
+```{r}
+# check data structure again
+str(data)
+```
+
+```{r}
+# Use the summary() function to get descriptive statistics and transpose the result
+df_summary <- t(summary(data))
+df_summary
+```
+
+```{r}
+# Check for missing values
+sum(is.na(data))
+```
+
+
+```{r}
+library(ggplot2)
+library(e1071)
+```
+
+```{r}
+# Create a data frame containing only the 'area' column
+area_df <- data.frame(area = data$area)
+# Set the plot parameters
+options(repr.plot.width = 16, repr.plot.height = 5)
+# Output skewness and kurtosis
+skewness <- skewness(area_df$area)
+kurtosis <- kurtosis(area_df$area)
+print(paste("Skew:", skewness))
+print(paste("Kurtosis:", kurtosis))
+```
+
+
+```{r}
+# boxplot of area
+ggplot(data, aes(x = " ", y = area)) +
+geom_boxplot(fill = "skyblue", color = "black") +
+labs(x = "Area", y = "ha",
+     title = "Boxplot of Area") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+# scale the orignial data
+
+```{r}
+library(caret)
+library(dplyr)
+```
+
+```{r}
+head(data)
+scaled_data <-  scale(data)
+scaled_data <- as.data.frame(scaled_data[,-13])
+# Display scaled data
+head(scaled_data)
+```
+
+```{r}
+# do log transformation to area
+data$ln_area <- log(data$area + 1)
+scaled_data <- cbind(scaled_data, ln_area =data$ln_area)
+head(scaled_data)
+```
+
+# corrplot
+
+```{r}
+library(corrplot)
+```
+
+```{r}
+# corrplot
+corrplot(cor(data[ ,1:12]), method = "circle", order = "hclust")
+```
+
+# Full Model
+
+```{r}
+set.seed(123)
+# Split the data into training and testing sets (80% training, 20% testing)
+indices <- createDataPartition(scaled_data$ln_area, p = 0.8, list = FALSE)
+train_data <- scaled_data[indices, ]
+test_data <- scaled_data[-indices, ]
+full_model <- lm(ln_area ~ ., data = train_data)
+summary(full_model)
+```
+
+# check VIF
+```{r}
+library(car)
+vif(full_model)
+```
+
+```{r, warning=F}
+set.seed(123)
+
+# Define the number of cross-validation folds
+number_of_folds <- 10
+cross_validation_folds <- createFolds(scaled_data$ln_area, k = number_of_folds, list = TRUE, returnTrain = FALSE)
+
+# Prepare a container for RMSE of test sets
+rmse_values <- vector(length = number_of_folds)
+
+# Execute 10-fold cross-validation
+for (fold_index in seq_len(number_of_folds)) {
+  # Partition the data
+  training_indices <- cross_validation_folds[[fold_index]]
+  training_set <- scaled_data[training_indices, ]
+  testing_set <- scaled_data[-training_indices, ]
+  
+  # Build the model using training data
+  full_model <- lm(ln_area ~ ., data = training_set)
+  
+  # Predictions for the testing set
+  predicted_values <- predict(full_model, newdata = testing_set)
+  
+  # Calculate RMSE for the current fold
+  rmse_values[fold_index] <- sqrt(mean((testing_set$ln_area - predicted_values)^2))
+}
+
+# Compute the mean RMSE from all folds
+average_rmse <- mean(rmse_values)
+
+# Print or use the average RMSE
+print(paste("10-fold full model RMSE:", average_rmse))
+```
+
+# if greater than 5, multicollinearity
+# All vif are smaller than 5
+# so we won't use PCA, PCR
+
+# Stepwise regesssion
+
+```{r}
+# Apply stepwise regression using backward
+stepwise_model <- step(full_model, direction = "backward")
+stepwise_model
+```
+
+```{r}
+summary(stepwise_model)
+```
+
+
+# 10-fold CV of stepwise model ln_area ~ DMC + wind
+```{r}
+library(MASS)
+library(caret)
+
+set.seed(123)
+
+# Define the number of cross-validation folds
+number_of_folds <- 10
+cross_validation_folds <- createFolds(scaled_data$ln_area, k = number_of_folds, list = TRUE, returnTrain = FALSE)
+
+# Prepare a container for RMSE of test sets
+rmse_values <- vector(length = number_of_folds)
+
+# Execute 10-fold cross-validation
+for (fold_index in seq_len(number_of_folds)) {
+  # Partition the data
+  training_indices <- cross_validation_folds[[fold_index]]
+  training_set <- scaled_data[training_indices, ]
+  testing_set <- scaled_data[-training_indices, ]
+  
+  # Build the model using training data
+  model_stepwise <- lm(ln_area ~ DMC + wind, data = training_set)
+  
+  # Predictions for the testing set
+  predicted_values <- predict(model_stepwise, newdata = testing_set)
+  
+  # Calculate RMSE for the current fold
+  rmse_values[fold_index] <- sqrt(mean((testing_set$ln_area - predicted_values)^2))
+}
+
+# Compute the mean RMSE from all folds
+average_rmse <- mean(rmse_values)
+
+# Print or use the average RMSE
+print(paste("10-fold stepwise final model RMSE:", average_rmse))
+
+
+```
+
+
+# LASSO & Elastic Net & Ridge
+
+```{r}
+set.seed(123)
+# Split the data into training and testing sets (80% training, 20% testing)
+indices <- createDataPartition(scaled_data$ln_area, p = 0.8, list = FALSE)
+train_data <- scaled_data[indices, ]
+test_data <- scaled_data[-indices, ]
+
+train_matrix <- data.matrix(train_data[, -which(names(train_data) == "ln_area")])
+test_matrix <- data.matrix(test_data[, -which(names(test_data) == "ln_area")])
+train_area <- train_data$ln_area
+test_area <- test_data$ln_area
+
+```
+
+```{r}
+set.seed(123)
+# Fit Lasso model using cross-validation
+library(glmnet)
+# alpha=1 for lasso
+cv.lasso <- cv.glmnet(train_matrix, train_area, alpha = 1)  
+lasso_model <- glmnet(train_matrix, train_area, alpha = 1, lambda = cv.lasso$lambda.min)
+lasso_model$beta
+```
+
+```{r}
+# Fit elastic net model using cross-validation
+# Define a sequence of alpha values to try
+alpha_seq <- seq(0.1, 1, by = 0.01)
+
+# Initialize a list to store cross-validation results
+cv_results <- list()
+
+# Perform cross-validation for each alpha
+for(a in alpha_seq) {
+  set.seed(123) 
+  cv_fit <- cv.glmnet(train_matrix, train_area, alpha = a)
+  cv_results[[paste("alpha", a, sep = "_")]] <- cv_fit
+}
+
+# Extract the best (minimum) cross-validated mean squared error for each alpha
+best_cvm <- sapply(cv_results, function(x) min(x$cvm))
+
+# Find the alpha with the lowest cross-validated mean squared error
+best_alpha_index <- which.min(best_cvm)
+best_alpha <- alpha_seq[best_alpha_index]
+
+# Fit the final model using the best alpha and its corresponding lambda
+elastic_model <- glmnet(train_matrix, train_area, alpha = best_alpha, lambda = cv_results[[best_alpha_index]]$lambda.min)
+
+# Print the best alpha
+print(paste("Best alpha:", best_alpha))
+elastic_model$beta
+```
+
+```{r}
+set.seed(123)
+# Fit Ridge model using cross-validation
+ # alpha=0 for ridge
+cv.ridge <- cv.glmnet(train_matrix, train_area, alpha = 0) 
+ridge_model <- glmnet(train_matrix, train_area, alpha = 0, lambda = cv.ridge$lambda.min)
+ridge_model$beta
+```
+
+```{r}
+set.seed(123)
+# Make predictions and evaluate the models
+predictions_lasso <- predict(lasso_model, s = cv.lasso$lambda.min, newx = test_matrix)
+predictions_elastic <- predict(elastic_model, 
+                               s = cv_results[[best_alpha_index]]$lambda.min, newx = test_matrix)
+predictions_ridge <- predict(ridge_model, s = cv.ridge$lambda.min, newx = test_matrix)
+```
+
+```{r}
+# Calculate RMSE for models
+rmse_lasso <- sqrt(mean((predictions_lasso - test_area)^2))
+rmse_elastic <- sqrt(mean((predictions_elastic - test_area)^2))
+rmse_ridge <- sqrt(mean((predictions_ridge - test_area)^2))
+
+print(paste("Average RMSE Lasso:", rmse_lasso))
+print(paste("Average RMSE elastic net:", rmse_elastic))
+print(paste("Averge RMSE Ridge:", rmse_ridge))
+```
+
+# random forest
+
+# 10 fold CV for RF model
+
+```{r}
+library(randomForest)
+library(caret)
+set.seed(123)
+# Set the number of folds for cross-validation
+num_folds <- 10
+
+# Initialize a vector to store RMSE values
+test_rmse <- numeric(num_folds)
+
+# Perform 10-fold cross-validation
+for (i in 1:num_folds) {
+  # Create indices for the current fold
+  indices <- createFolds(scaled_data$ln_area, k = num_folds, returnTrain = FALSE)[[i]]
+  
+  # Split the data into training and testing sets
+  train_data <- scaled_data[-indices, ]
+  test_data <- scaled_data[indices, ]
+  
+  # Fit the random forest model on the training data
+  rf_model <- randomForest(ln_area ~ ., data = train_data, ntree = 500, mtry = 3)
+  
+  # Make predictions on the test set
+  predictions_rf <- predict(rf_model, newdata = test_data)
+  
+  # Calculate residuals
+  residuals <- test_data$ln_area - predictions_rf
+  
+  # Compute the mean squared residuals
+  mean_squared_residuals <- mean(residuals^2)
+  
+  # Square root of the mean squared residuals to get RMSE
+  test_rmse[i] <- sqrt(mean_squared_residuals)
+}
+
+# Calculate the average RMSE across all folds
+average_rmse <- mean(test_rmse)
+
+# Print or use the average RMSE
+print(paste("Average Random Forest RMSE:", average_rmse))
+
+```
+
